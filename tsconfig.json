@@ -16,5 +16,5 @@
     "noEmit": true
   },
   "include": ["src/**/*.ts", "tests/**/*.ts", "rollup.config.ts"],
-  "exclude": ["node_modules", "detect/dist"]
+  "exclude": ["node_modules", "dist"]
 }

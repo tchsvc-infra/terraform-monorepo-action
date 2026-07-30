@@ -80,7 +80,7 @@ All outputs are JSON strings, you can parse it with `fromJSON()`.
 
 | Output                 | Description                                                                                                                                                                                                                         |
 | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `root_modules`         | Affected root (deployable) modules, **the main output**; feed it to your plan/apply matrix.                                                                                                                                        |
+| `root_modules`         | Affected root (deployable) modules, **the main output**; feed it to your plan/apply matrix.                                                                                                                                         |
 | `root_modules_ordered` | Root modules as array of arrays: topologically ordered layers, dependencies first.                                                                                                                                                  |
 | `module_changes`       | Per-status detail: `{"added": [], "modified": [], "renamed": [], "deleted": []}`.                                                                                                                                                   |
 | `dependency_graph`     | Every discovered module with class, engine, markers, dependencies and dependents.                                                                                                                                                   |
@@ -202,4 +202,4 @@ npm ci
 npm run all   # format check, lint, typecheck, test, build
 ```
 
-`detect/dist/` is committed and verified by CI (`check-dist`); rebuild with `npm run build` after changing `src/`.
+`dist/` is committed and verified by CI (`check-dist`); rebuild with `npm run build` after changing `src/`.

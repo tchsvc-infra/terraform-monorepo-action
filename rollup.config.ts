@@ -5,7 +5,7 @@ import typescript from '@rollup/plugin-typescript'
 export default {
   input: 'src/main.ts',
   output: {
-    file: 'detect/dist/index.js',
+    file: 'dist/index.js',
     format: 'es',
     sourcemap: true,
   },

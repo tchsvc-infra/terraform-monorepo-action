@@ -1,4 +1,4 @@
-detect/dist/
+dist/
 node_modules/
 coverage/
 CHANGELOG.md

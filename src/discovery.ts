@@ -10,7 +10,7 @@ const TEST_FILE_RE = /\.(tftest|tofutest)\.(hcl|json)$/
 
 const SKIP_DIR_NAMES = new Set(['.git', '.terraform', 'node_modules'])
 
-export const DEFAULT_EXCLUDES = ['.github/**', '.github']
+export const DEFAULT_EXCLUDES = ['**/.github/**', '**/.github']
 
 export function isModuleConfigFile(name: string): boolean {
   return CONFIG_FILE_RE.test(name) && !TEST_FILE_RE.test(name)

@@ -88,17 +88,18 @@ runs:
 
     - name: Detect Terraform modules
       id: detect
-      uses: ./detect
-      with:
-        mode: ${{ inputs.mode }}
-        include: ${{ inputs.include }}
-        exclude: ${{ inputs.exclude }}
-        follow_dependencies: ${{ inputs.follow_dependencies }}
-        environments: ${{ inputs.environments }}
-        summary: ${{ inputs.summary }}
-        added_files: ${{ steps.changed-files.outputs.added_files }}
-        copied_files: ${{ steps.changed-files.outputs.copied_files }}
-        modified_files: ${{ steps.changed-files.outputs.modified_files }}
-        renamed_files: ${{ steps.changed-files.outputs.renamed_files }}
-        type_changed_files: ${{ steps.changed-files.outputs.type_changed_files }}
-        deleted_files: ${{ steps.changed-files.outputs.deleted_files }}
+      shell: bash
+      run: node "$GITHUB_ACTION_PATH/dist/index.js"
+      env:
+        INPUT_MODE: ${{ inputs.mode }}
+        INPUT_INCLUDE: ${{ inputs.include }}
+        INPUT_EXCLUDE: ${{ inputs.exclude }}
+        INPUT_FOLLOW_DEPENDENCIES: ${{ inputs.follow_dependencies }}
+        INPUT_ENVIRONMENTS: ${{ inputs.environments }}
+        INPUT_SUMMARY: ${{ inputs.summary }}
+        INPUT_ADDED_FILES: ${{ steps.changed-files.outputs.added_files }}
+        INPUT_COPIED_FILES: ${{ steps.changed-files.outputs.copied_files }}
+        INPUT_MODIFIED_FILES: ${{ steps.changed-files.outputs.modified_files }}
+        INPUT_RENAMED_FILES: ${{ steps.changed-files.outputs.renamed_files }}
+        INPUT_TYPE_CHANGED_FILES: ${{ steps.changed-files.outputs.type_changed_files }}
+        INPUT_DELETED_FILES: ${{ steps.changed-files.outputs.deleted_files }}
