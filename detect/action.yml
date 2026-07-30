@@ -1,0 +1,53 @@
+name: terraform-monorepo-detect
+description: Internal sub-action that classifies Terraform/OpenTofu modules. Use the root action instead.
+inputs:
+  mode:
+    description: '`all` or `changed`.'
+    required: false
+    default: changed
+  include:
+    description: Glob patterns of directories to consider during module discovery.
+    required: false
+  exclude:
+    description: Glob patterns of directories to exclude from module discovery.
+    required: false
+  follow_dependencies:
+    description: Mark modules that depend on changed modules as changed too.
+    required: false
+    default: 'true'
+  summary:
+    description: Write a markdown report to the job summary.
+    required: false
+    default: 'true'
+  added_files:
+    description: JSON array of added files.
+    required: false
+  copied_files:
+    description: JSON array of copied files.
+    required: false
+  modified_files:
+    description: JSON array of modified files.
+    required: false
+  renamed_files:
+    description: JSON array of renamed files.
+    required: false
+  type_changed_files:
+    description: JSON array of type-changed files.
+    required: false
+  deleted_files:
+    description: JSON array of deleted files.
+    required: false
+outputs:
+  root_modules:
+    description: JSON array of affected root (deployable) module paths — the ones to run terraform/tofu on.
+  root_modules_ordered:
+    description: JSON array of arrays; root modules in topologically ordered layers (dependencies first).
+  module_changes:
+    description: 'JSON object with per-status module lists: {"added": [], "modified": [], "renamed": [], "deleted": []}.'
+  dependency_graph:
+    description: JSON object of every discovered module with class, engine, markers, dependencies and dependents.
+  any_changed:
+    description: Whether any module is affected ('true'/'false').
+runs:
+  using: node24
+  main: dist/index.js

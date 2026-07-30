@@ -1,0 +1,111 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+      - v2
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  prek:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - name: Run prek hooks
+        uses: j178/prek-action@4e14d07f9231acabce116ccfca13b13dd9755ece # v3.0.0
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+  check-dist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build
+
+      - name: Verify detect/dist is up to date
+        run: |
+          if ! git diff --quiet --ignore-space-at-eol detect/dist/; then
+            echo "::error::detect/dist is out of date. Run 'npm run build' and commit the result."
+            git diff --stat detect/dist/
+            exit 1
+          fi
+
+  self-test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Run action (mode=all on fixtures)
+        id: all
+        uses: ./
+        with:
+          mode: all
+          include: tests/fixtures/monorepo/**
+
+      - name: Assert fixture modules were detected
+        shell: bash
+        env:
+          ROOT_MODULES: ${{ steps.all.outputs.root_modules }}
+          MODULES_ORDERED: ${{ steps.all.outputs.root_modules_ordered }}
+          GRAPH: ${{ steps.all.outputs.dependency_graph }}
+        run: |
+          echo "root_modules:         $ROOT_MODULES"
+          echo "root_modules_ordered: $MODULES_ORDERED"
+          echo "dependency_graph:     $GRAPH"
+          roots=$(node -e 'console.log(JSON.parse(process.env.ROOT_MODULES).length)')
+          [ "$roots" -eq 3 ] || { echo "::error::expected 3 root modules, got $roots"; exit 1; }
+          total=$(node -e 'console.log(Object.keys(JSON.parse(process.env.GRAPH)).length)')
+          [ "$total" -eq 8 ] || { echo "::error::expected 8 modules in graph, got $total"; exit 1; }
+
+      - name: Run action (mode=changed)
+        id: changed
+        if: github.event_name == 'pull_request'
+        uses: ./
+
+      - name: Print changed outputs
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          ROOT_MODULES: ${{ steps.changed.outputs.root_modules }}
+          ANY_CHANGED: ${{ steps.changed.outputs.any_changed }}
+        run: |
+          echo "root_modules: $ROOT_MODULES"
+          echo "any_changed:  $ANY_CHANGED"

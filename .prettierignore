@@ -1,2 +1,5 @@
-dist/
+detect/dist/
 node_modules/
+coverage/
+CHANGELOG.md
+tests/fixtures/
