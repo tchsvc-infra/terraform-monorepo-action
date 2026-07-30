@@ -5,22 +5,30 @@ export function normalizePath(file: string): string {
   return file.replaceAll('\\', '/').replace(/^\.\//, '')
 }
 
+/**
+ * Find the deepest discovered module directory containing the given file,
+ * or undefined when no module owns it.
+ */
+export function owningModule(
+  file: string,
+  moduleDirs: Set<string>,
+): string | undefined {
+  let dir = file.includes('/') ? file.slice(0, file.lastIndexOf('/')) : '.'
+  while (true) {
+    if (moduleDirs.has(dir)) return dir
+    if (dir === '.') return undefined
+    dir = dir.includes('/') ? dir.slice(0, dir.lastIndexOf('/')) : '.'
+  }
+}
+
 export function mapFilesToModules(
   files: string[],
   moduleDirs: Set<string>,
 ): Set<string> {
   const result = new Set<string>()
   for (const raw of files) {
-    const file = normalizePath(raw)
-    let dir = file.includes('/') ? file.slice(0, file.lastIndexOf('/')) : '.'
-    while (true) {
-      if (moduleDirs.has(dir)) {
-        result.add(dir)
-        break
-      }
-      if (dir === '.') break
-      dir = dir.includes('/') ? dir.slice(0, dir.lastIndexOf('/')) : '.'
-    }
+    const owner = owningModule(normalizePath(raw), moduleDirs)
+    if (owner !== undefined) result.add(owner)
   }
   return result
 }

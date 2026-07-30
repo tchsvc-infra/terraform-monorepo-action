@@ -6,7 +6,14 @@ import {
   normalizePath,
 } from './changed.js'
 import { analyzeModule } from './classify.js'
-import { discoverModules } from './discovery.js'
+import { collectFiles, discoverModules } from './discovery.js'
+import {
+  ALL_ENVIRONMENTS,
+  buildEnvironmentsMatrix,
+  environmentTriggers,
+  moduleEnvironments,
+  parseEnvironments,
+} from './environments.js'
 import {
   buildGraph,
   propagateChanges,
@@ -156,6 +163,7 @@ export async function run(): Promise<void> {
   const exclude = getListInput('exclude')
   const followDependencies = getBoolInput('follow_dependencies', true)
   const summaryEnabled = getBoolInput('summary', true)
+  const envPatterns = parseEnvironments(core.getInput('environments'))
 
   if (mode !== 'all' && mode !== 'changed') {
     core.setFailed(`Unsupported mode: '${mode}'. Use 'all' or 'changed'.`)
@@ -170,12 +178,18 @@ export async function run(): Promise<void> {
   const analyses = modulePaths.map((p) => analyzeModule(rootDir, p))
   const graph = buildGraph(analyses)
   const moduleDirs = new Set(modulePaths)
+  const moduleEnvs = moduleEnvironments(
+    envPatterns.size > 0 ? collectFiles(rootDir) : [],
+    moduleDirs,
+    envPatterns,
+  )
 
   let affected: Set<string>
   let addedModules = new Set<string>()
   let modifiedModules = new Set<string>()
   let renamedModules = new Set<string>()
   let deletedModules: string[] = []
+  let envTriggers = new Map<string, Set<string> | typeof ALL_ENVIRONMENTS>()
 
   if (mode === 'all') {
     affected = new Set(modulePaths)
@@ -206,6 +220,12 @@ export async function run(): Promise<void> {
     ])
     affected = followDependencies ? propagateChanges(direct, graph) : direct
 
+    envTriggers = environmentTriggers(
+      [...addedFiles, ...modifiedFiles, ...renamedFiles, ...deletedFiles],
+      moduleDirs,
+      envPatterns,
+    )
+
     for (const mod of affected) {
       if (!direct.has(mod))
         core.debug(`Module '${mod}' included via dependency propagation`)
@@ -230,6 +250,12 @@ export async function run(): Promise<void> {
   }
 
   setOutputs(results, graph)
+  core.setOutput(
+    'environments_matrix',
+    JSON.stringify(
+      buildEnvironmentsMatrix(rootModules, moduleEnvs, envTriggers, mode),
+    ),
+  )
   core.info(
     `Affected modules (${results.allModules.length}): ${results.allModules.join(', ') || '—'}`,
   )

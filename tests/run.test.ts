@@ -152,4 +152,47 @@ describe('run (mode=changed)', () => {
     expect(JSON.parse(outputs.root_modules ?? '')).toEqual([])
     expect(outputs.any_changed).toBe('true')
   })
+
+  it('fans out environments_matrix per triggered environment', async () => {
+    setInput('mode', 'changed')
+    setInput('environments', 'dev=**/variables/dev.*\nprod=**/variables/prod.*')
+    setInput(
+      'modified_files',
+      JSON.stringify(['stacks/vpc/variables/prod.tfvars']),
+    )
+    await run()
+
+    const outputs = readOutputs()
+    expect(JSON.parse(outputs.environments_matrix ?? '')).toEqual([
+      { module: 'stacks/vpc', environment: 'prod' },
+    ])
+  })
+
+  it('fans out all environments for module code changes and propagation', async () => {
+    setInput('mode', 'changed')
+    setInput('environments', 'dev=**/variables/dev.*\nprod=**/variables/prod.*')
+    setInput('modified_files', JSON.stringify(['modules/network/main.tf']))
+    await run()
+
+    const outputs = readOutputs()
+    expect(JSON.parse(outputs.environments_matrix ?? '')).toEqual([
+      { module: 'stacks/app' },
+      { module: 'stacks/vpc', environment: 'dev' },
+      { module: 'stacks/vpc', environment: 'prod' },
+    ])
+  })
+
+  it('emits plain module entries when environments input is unset', async () => {
+    setInput('mode', 'changed')
+    setInput(
+      'modified_files',
+      JSON.stringify(['stacks/vpc/variables/prod.tfvars']),
+    )
+    await run()
+
+    const outputs = readOutputs()
+    expect(JSON.parse(outputs.environments_matrix ?? '')).toEqual([
+      { module: 'stacks/vpc' },
+    ])
+  })
 })

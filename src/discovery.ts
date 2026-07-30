@@ -78,3 +78,30 @@ export function discoverModules(
   walk('')
   return modules.sort()
 }
+
+/**
+ * Collect every file in the repository (repo-relative POSIX paths), skipping
+ * the same internal directories as module discovery.
+ */
+export function collectFiles(rootDir: string): string[] {
+  const files: string[] = []
+
+  const walk = (relDir: string): void => {
+    const absDir = relDir === '' ? rootDir : join(rootDir, relDir)
+    let entries
+    try {
+      entries = readdirSync(absDir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      const relPath = relDir === '' ? entry.name : `${relDir}/${entry.name}`
+      if (entry.isFile()) files.push(relPath)
+      else if (entry.isDirectory() && !SKIP_DIR_NAMES.has(entry.name))
+        walk(relPath)
+    }
+  }
+
+  walk('')
+  return files.sort()
+}

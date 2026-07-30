@@ -40,6 +40,9 @@ inputs:
     description: Mark modules that depend (via local `module` source references) on changed modules as changed too. Defaults to `true`.
     required: false
     default: 'true'
+  environments:
+    description: 'Per-environment file patterns, one `name=pattern[;pattern...]` per line (e.g. `prod=prod.tfvars;prod.backend.tfvars`). Patterns without `/` match file names anywhere; patterns with `/` are path globs. A changed file matching a pattern triggers only that environment; other changed files trigger all environments of their module.'
+    required: false
   summary:
     description: Write a markdown report of the detected modules to the job summary. Defaults to `true`.
     required: false
@@ -58,6 +61,9 @@ outputs:
   dependency_graph:
     description: JSON object of every discovered module with class, engine, markers, dependencies and dependents.
     value: ${{ steps.detect.outputs.dependency_graph }}
+  environments_matrix:
+    description: 'JSON array of {module, environment} entries for `strategy.matrix.include`, fanned out per triggered environment.'
+    value: ${{ steps.detect.outputs.environments_matrix }}
   any_changed:
     description: Whether any module is affected ('true'/'false').
     value: ${{ steps.detect.outputs.any_changed }}
@@ -88,6 +94,7 @@ runs:
         include: ${{ inputs.include }}
         exclude: ${{ inputs.exclude }}
         follow_dependencies: ${{ inputs.follow_dependencies }}
+        environments: ${{ inputs.environments }}
         summary: ${{ inputs.summary }}
         added_files: ${{ steps.changed-files.outputs.added_files }}
         copied_files: ${{ steps.changed-files.outputs.copied_files }}

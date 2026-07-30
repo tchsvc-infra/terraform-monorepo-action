@@ -31197,9 +31197,7 @@ var picomatch = /*@__PURE__*/getDefaultExportFromCjs(picomatchExports);
 const CONFIG_FILE_RE = /\.(tf|tofu)(\.json)?$/;
 /** Test files never count as module content. */
 const TEST_FILE_RE = /\.(tftest|tofutest)\.(hcl|json)$/;
-/** Directory basenames that are never descended into. */
 const SKIP_DIR_NAMES = new Set(['.git', '.terraform', 'node_modules']);
-/** Default exclude patterns applied on top of user-provided ones. */
 const DEFAULT_EXCLUDES = ['.github/**', '.github'];
 function isModuleConfigFile(name) {
     return CONFIG_FILE_RE.test(name) && !TEST_FILE_RE.test(name);
@@ -31217,10 +31215,6 @@ function expandDirPatterns(patterns) {
     }
     return [...expanded];
 }
-/**
- * Walk the repository and return every directory (repo-relative POSIX path)
- * that directly contains at least one Terraform/OpenTofu configuration file.
- */
 function discoverModules(rootDir, options = {}) {
     const include = expandDirPatterns(options.include ?? []);
     const exclude = expandDirPatterns([
@@ -31255,25 +31249,57 @@ function discoverModules(rootDir, options = {}) {
     walk('');
     return modules.sort();
 }
+/**
+ * Collect every file in the repository (repo-relative POSIX paths), skipping
+ * the same internal directories as module discovery.
+ */
+function collectFiles(rootDir) {
+    const files = [];
+    const walk = (relDir) => {
+        const absDir = relDir === '' ? rootDir : join(rootDir, relDir);
+        let entries;
+        try {
+            entries = readdirSync(absDir, { withFileTypes: true });
+        }
+        catch {
+            return;
+        }
+        for (const entry of entries) {
+            const relPath = relDir === '' ? entry.name : `${relDir}/${entry.name}`;
+            if (entry.isFile())
+                files.push(relPath);
+            else if (entry.isDirectory() && !SKIP_DIR_NAMES.has(entry.name))
+                walk(relPath);
+        }
+    };
+    walk('');
+    return files.sort();
+}
 
 /** Normalize a changed-file path to repo-relative POSIX form. */
 function normalizePath(file) {
     return file.replaceAll('\\', '/').replace(/^\.\//, '');
 }
+/**
+ * Find the deepest discovered module directory containing the given file,
+ * or undefined when no module owns it.
+ */
+function owningModule(file, moduleDirs) {
+    let dir = file.includes('/') ? file.slice(0, file.lastIndexOf('/')) : '.';
+    while (true) {
+        if (moduleDirs.has(dir))
+            return dir;
+        if (dir === '.')
+            return undefined;
+        dir = dir.includes('/') ? dir.slice(0, dir.lastIndexOf('/')) : '.';
+    }
+}
 function mapFilesToModules(files, moduleDirs) {
     const result = new Set();
     for (const raw of files) {
-        const file = normalizePath(raw);
-        let dir = file.includes('/') ? file.slice(0, file.lastIndexOf('/')) : '.';
-        while (true) {
-            if (moduleDirs.has(dir)) {
-                result.add(dir);
-                break;
-            }
-            if (dir === '.')
-                break;
-            dir = dir.includes('/') ? dir.slice(0, dir.lastIndexOf('/')) : '.';
-        }
+        const owner = owningModule(normalizePath(raw), moduleDirs);
+        if (owner !== undefined)
+            result.add(owner);
     }
     return result;
 }
@@ -31523,6 +31549,148 @@ function analyzeModule(rootDir, modulePath) {
     };
 }
 
+/**
+ * Split a glob list on `,` or `;`, ignoring delimiters inside braces so
+ * brace-expansion globs like `{dev,develop}.*` stay intact.
+ */
+function splitGlobs(raw) {
+    const globs = [];
+    let current = '';
+    let depth = 0;
+    for (const ch of raw) {
+        if (ch === '{')
+            depth += 1;
+        else if (ch === '}')
+            depth = Math.max(0, depth - 1);
+        if ((ch === ',' || ch === ';') && depth === 0) {
+            globs.push(current);
+            current = '';
+        }
+        else {
+            current += ch;
+        }
+    }
+    globs.push(current);
+    return globs.map((s) => s.trim()).filter((s) => s.length > 0);
+}
+/**
+ * Parse the `environments` input: one environment per line in the form
+ * `name=glob[,glob...]` (globs delimited by `,` or `;`).
+ */
+function parseEnvironments(raw) {
+    const patterns = new Map();
+    for (const line of raw.split('\n')) {
+        const entry = line.trim();
+        if (!entry)
+            continue;
+        const eq = entry.indexOf('=');
+        const name = eq > 0 ? entry.slice(0, eq).trim() : '';
+        const globs = eq > 0 ? splitGlobs(entry.slice(eq + 1)) : [];
+        if (!name || globs.length === 0) {
+            throw new Error(`Invalid environments entry: '${entry}' (expected name=glob[,glob...])`);
+        }
+        patterns.set(name, globs);
+    }
+    return patterns;
+}
+/**
+ * Names of environments whose patterns match the given file.
+ * Patterns without a `/` are matched against the file name anywhere in the
+ * tree (e.g. `prod.tfvars`); patterns with a `/` match the full repo path.
+ */
+function environmentsOfFile(file, patterns) {
+    const normalized = normalizePath(file);
+    const result = [];
+    for (const [name, globs] of patterns) {
+        const matched = globs.some((glob) => picomatch.isMatch(normalized, glob, {
+            dot: true,
+            basename: !glob.includes('/'),
+        }));
+        if (matched)
+            result.push(name);
+    }
+    return result;
+}
+/**
+ * Determine which environments each module has: environment E belongs to
+ * module M when a file owned by M matches one of E's patterns.
+ */
+function moduleEnvironments(allFiles, moduleDirs, patterns) {
+    const result = new Map();
+    if (patterns.size === 0)
+        return result;
+    for (const file of allFiles) {
+        const envs = environmentsOfFile(file, patterns);
+        if (envs.length === 0)
+            continue;
+        const owner = owningModule(normalizePath(file), moduleDirs);
+        if (owner === undefined)
+            continue;
+        let set = result.get(owner);
+        if (!set) {
+            set = new Set();
+            result.set(owner, set);
+        }
+        for (const env of envs)
+            set.add(env);
+    }
+    return result;
+}
+/** All environments of a module are triggered. */
+const ALL_ENVIRONMENTS = '*';
+/**
+ * Compute which environments are triggered per directly-changed module.
+ * A changed file matching an environment pattern triggers only that
+ * environment; any other file triggers all environments of its module.
+ */
+function environmentTriggers(changedFiles, moduleDirs, patterns) {
+    const triggers = new Map();
+    for (const raw of changedFiles) {
+        const file = normalizePath(raw);
+        const owner = owningModule(file, moduleDirs);
+        if (owner === undefined)
+            continue;
+        const envs = environmentsOfFile(file, patterns);
+        const current = triggers.get(owner);
+        if (current === ALL_ENVIRONMENTS)
+            continue;
+        if (envs.length === 0) {
+            triggers.set(owner, ALL_ENVIRONMENTS);
+        }
+        else {
+            const set = current ?? new Set();
+            for (const env of envs)
+                set.add(env);
+            triggers.set(owner, set);
+        }
+    }
+    return triggers;
+}
+/**
+ * Build matrix entries for the affected root modules. Modules with known
+ * environments fan out into one entry per triggered environment; modules
+ * without environments produce a single entry.
+ */
+function buildEnvironmentsMatrix(rootModules, moduleEnvs, triggers, mode) {
+    const entries = [];
+    for (const module of rootModules) {
+        const known = [...(moduleEnvs.get(module) ?? [])].sort();
+        // Propagated (or mode=all) modules have no direct trigger: all envs.
+        const trigger = mode === 'all'
+            ? ALL_ENVIRONMENTS
+            : (triggers.get(module) ?? ALL_ENVIRONMENTS);
+        const envs = trigger === ALL_ENVIRONMENTS ? known : [...trigger].sort();
+        if (envs.length === 0) {
+            entries.push({ module });
+        }
+        else {
+            for (const env of envs)
+                entries.push({ module, environment: env });
+        }
+    }
+    return entries;
+}
+
 function hasRootEvidence(analysis) {
     return (analysis.definitiveMarkers.length > 0 ||
         analysis.supportingMarkers.length >= 2);
@@ -31717,6 +31885,7 @@ async function run() {
     const exclude = getListInput('exclude');
     const followDependencies = getBoolInput('follow_dependencies', true);
     const summaryEnabled = getBoolInput('summary', true);
+    const envPatterns = parseEnvironments(getInput('environments'));
     if (mode !== 'all' && mode !== 'changed') {
         setFailed(`Unsupported mode: '${mode}'. Use 'all' or 'changed'.`);
         return;
@@ -31726,11 +31895,13 @@ async function run() {
     const analyses = modulePaths.map((p) => analyzeModule(rootDir, p));
     const graph = buildGraph(analyses);
     const moduleDirs = new Set(modulePaths);
+    const moduleEnvs = moduleEnvironments(envPatterns.size > 0 ? collectFiles(rootDir) : [], moduleDirs, envPatterns);
     let affected;
     let addedModules = new Set();
     let modifiedModules = new Set();
     let renamedModules = new Set();
     let deletedModules = [];
+    let envTriggers = new Map();
     if (mode === 'all') {
         affected = new Set(modulePaths);
     }
@@ -31758,6 +31929,7 @@ async function run() {
             ...renamedModules,
         ]);
         affected = followDependencies ? propagateChanges(direct, graph) : direct;
+        envTriggers = environmentTriggers([...addedFiles, ...modifiedFiles, ...renamedFiles, ...deletedFiles], moduleDirs, envPatterns);
         for (const mod of affected) {
             if (!direct.has(mod))
                 debug(`Module '${mod}' included via dependency propagation`);
@@ -31778,6 +31950,7 @@ async function run() {
             .filter((layer) => layer.length > 0),
     };
     setOutputs(results, graph);
+    setOutput('environments_matrix', JSON.stringify(buildEnvironmentsMatrix(rootModules, moduleEnvs, envTriggers, mode)));
     info(`Affected modules (${results.allModules.length}): ${results.allModules.join(', ') || '—'}`);
     if (summaryEnabled)
         await writeSummary(mode, results, graph);
