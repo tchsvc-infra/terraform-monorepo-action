@@ -31844,33 +31844,76 @@ function setOutputs(results, graph) {
     setOutput('dependency_graph', JSON.stringify(buildDependencyGraph(graph)));
     setOutput('any_changed', String(results.allModules.length > 0 || results.deletedModules.length > 0));
 }
-async function writeSummary(mode, results, graph) {
+async function writeSummary(mode, results, graph, matrix, envPatterns) {
     if (!process.env.GITHUB_STEP_SUMMARY)
         return;
-    const rows = results.allModules.map((path) => {
-        const mod = graph.modules.get(path);
-        const markers = [
-            ...(mod?.definitiveMarkers ?? []),
-            ...(mod?.supportingMarkers ?? []),
-        ];
-        return [
-            path,
-            mod?.moduleClass ?? 'root',
-            mod?.engine ?? 'terraform',
-            statusOf(mode, results, path),
-            markers.join(', '),
-        ];
-    });
-    summary.addHeading('Terraform modules', 3).addTable([
-        [
+    const withEnvironments = envPatterns.size > 0;
+    const triggeredEnvs = new Map();
+    for (const entry of matrix) {
+        if (entry.environment === undefined)
+            continue;
+        const envs = triggeredEnvs.get(entry.module) ?? [];
+        envs.push(entry.environment);
+        triggeredEnvs.set(entry.module, envs);
+    }
+    const childCount = results.allModules.length - results.rootModules.length;
+    const facts = [
+        `mode: ${mode}`,
+        `${results.rootModules.length} root`,
+        `${childCount} child`,
+    ];
+    if (results.deletedModules.length > 0) {
+        facts.push(`${results.deletedModules.length} deleted`);
+    }
+    if (withEnvironments) {
+        facts.push(`declared environments: ${[...envPatterns.keys()].join(', ')}`);
+        facts.push(`matrix entries: ${matrix.length}`);
+    }
+    summary
+        .addHeading('Terraform modules', 3)
+        .addRaw(facts.join(' · '), true);
+    if (results.allModules.length === 0) {
+        summary.addRaw('No modules affected by this change.', true);
+    }
+    else {
+        const header = [
             { data: 'Module', header: true },
             { data: 'Class', header: true },
             { data: 'Engine', header: true },
             { data: 'Status', header: true },
+            ...(withEnvironments ? [{ data: 'Environments', header: true }] : []),
             { data: 'Root markers', header: true },
-        ],
-        ...rows,
-    ]);
+        ];
+        const rows = results.allModules.map((path) => {
+            const mod = graph.modules.get(path);
+            const markers = [
+                ...(mod?.definitiveMarkers ?? []),
+                ...(mod?.supportingMarkers ?? []),
+            ];
+            const environments = triggeredEnvs.get(path)?.join(', ') ?? '—';
+            return [
+                path,
+                mod?.moduleClass ?? 'root',
+                mod?.engine ?? 'terraform',
+                statusOf(mode, results, path),
+                ...(withEnvironments ? [environments] : []),
+                markers.join(', ') || '—',
+            ];
+        });
+        summary.addTable([header, ...rows]);
+    }
+    if (results.rootModulesOrdered.length > 1) {
+        summary.addHeading('Apply order', 3).addTable([
+            [
+                { data: 'Layer', header: true },
+                { data: 'Root modules', header: true },
+            ],
+            ...results.rootModulesOrdered.map((layer, index) => [
+                String(index + 1),
+                layer.join(', '),
+            ]),
+        ]);
+    }
     if (results.deletedModules.length > 0) {
         summary
             .addHeading('Deleted modules', 3)
@@ -31950,10 +31993,11 @@ async function run() {
             .filter((layer) => layer.length > 0),
     };
     setOutputs(results, graph);
-    setOutput('environments_matrix', JSON.stringify(buildEnvironmentsMatrix(rootModules, moduleEnvs, envTriggers, mode)));
+    const matrix = buildEnvironmentsMatrix(rootModules, moduleEnvs, envTriggers, mode);
+    setOutput('environments_matrix', JSON.stringify(matrix));
     info(`Affected modules (${results.allModules.length}): ${results.allModules.join(', ') || '—'}`);
     if (summaryEnabled)
-        await writeSummary(mode, results, graph);
+        await writeSummary(mode, results, graph, matrix, envPatterns);
 }
 
 run().catch((error) => {

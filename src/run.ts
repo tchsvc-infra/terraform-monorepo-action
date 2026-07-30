@@ -13,6 +13,8 @@ import {
   environmentTriggers,
   moduleEnvironments,
   parseEnvironments,
+  type EnvironmentPatterns,
+  type MatrixEntry,
 } from './environments.js'
 import {
   buildGraph,
@@ -118,34 +120,82 @@ async function writeSummary(
   mode: string,
   results: Results,
   graph: ModuleGraph,
+  matrix: MatrixEntry[],
+  envPatterns: EnvironmentPatterns,
 ): Promise<void> {
   if (!process.env.GITHUB_STEP_SUMMARY) return
 
-  const rows = results.allModules.map((path) => {
-    const mod = graph.modules.get(path)
-    const markers = [
-      ...(mod?.definitiveMarkers ?? []),
-      ...(mod?.supportingMarkers ?? []),
-    ]
-    return [
-      path,
-      mod?.moduleClass ?? 'root',
-      mod?.engine ?? 'terraform',
-      statusOf(mode, results, path),
-      markers.join(', '),
-    ]
-  })
+  const withEnvironments = envPatterns.size > 0
+  const triggeredEnvs = new Map<string, string[]>()
+  for (const entry of matrix) {
+    if (entry.environment === undefined) continue
+    const envs = triggeredEnvs.get(entry.module) ?? []
+    envs.push(entry.environment)
+    triggeredEnvs.set(entry.module, envs)
+  }
 
-  core.summary.addHeading('Terraform modules', 3).addTable([
-    [
+  const childCount = results.allModules.length - results.rootModules.length
+  const facts = [
+    `mode: ${mode}`,
+    `${results.rootModules.length} root`,
+    `${childCount} child`,
+  ]
+  if (results.deletedModules.length > 0) {
+    facts.push(`${results.deletedModules.length} deleted`)
+  }
+  if (withEnvironments) {
+    facts.push(`declared environments: ${[...envPatterns.keys()].join(', ')}`)
+    facts.push(`matrix entries: ${matrix.length}`)
+  }
+
+  core.summary
+    .addHeading('Terraform modules', 3)
+    .addRaw(facts.join(' · '), true)
+
+  if (results.allModules.length === 0) {
+    core.summary.addRaw('No modules affected by this change.', true)
+  } else {
+    const header = [
       { data: 'Module', header: true },
       { data: 'Class', header: true },
       { data: 'Engine', header: true },
       { data: 'Status', header: true },
+      ...(withEnvironments ? [{ data: 'Environments', header: true }] : []),
       { data: 'Root markers', header: true },
-    ],
-    ...rows,
-  ])
+    ]
+
+    const rows = results.allModules.map((path) => {
+      const mod = graph.modules.get(path)
+      const markers = [
+        ...(mod?.definitiveMarkers ?? []),
+        ...(mod?.supportingMarkers ?? []),
+      ]
+      const environments = triggeredEnvs.get(path)?.join(', ') ?? '—'
+      return [
+        path,
+        mod?.moduleClass ?? 'root',
+        mod?.engine ?? 'terraform',
+        statusOf(mode, results, path),
+        ...(withEnvironments ? [environments] : []),
+        markers.join(', ') || '—',
+      ]
+    })
+
+    core.summary.addTable([header, ...rows])
+  }
+
+  if (results.rootModulesOrdered.length > 1) {
+    core.summary.addHeading('Apply order', 3).addTable([
+      [
+        { data: 'Layer', header: true },
+        { data: 'Root modules', header: true },
+      ],
+      ...results.rootModulesOrdered.map((layer, index) => [
+        String(index + 1),
+        layer.join(', '),
+      ]),
+    ])
+  }
 
   if (results.deletedModules.length > 0) {
     core.summary
@@ -250,15 +300,17 @@ export async function run(): Promise<void> {
   }
 
   setOutputs(results, graph)
-  core.setOutput(
-    'environments_matrix',
-    JSON.stringify(
-      buildEnvironmentsMatrix(rootModules, moduleEnvs, envTriggers, mode),
-    ),
+  const matrix = buildEnvironmentsMatrix(
+    rootModules,
+    moduleEnvs,
+    envTriggers,
+    mode,
   )
+  core.setOutput('environments_matrix', JSON.stringify(matrix))
   core.info(
     `Affected modules (${results.allModules.length}): ${results.allModules.join(', ') || '—'}`,
   )
 
-  if (summaryEnabled) await writeSummary(mode, results, graph)
+  if (summaryEnabled)
+    await writeSummary(mode, results, graph, matrix, envPatterns)
 }
